@@ -50,6 +50,7 @@ export function LyricsOverlay({
   if (style === "constellation") {
     return (
       <ConstellationLyrics
+        allLyrics={lyrics}
         currentLine={currentLine}
         prevLine={prevLine}
         nextLine={nextLine}
