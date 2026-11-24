@@ -2,6 +2,92 @@ import { TrackInfo } from "./types";
 
 export const SAMPLE_TRACKS: TrackInfo[] = [
   {
+    id: "sweater-weather",
+    title: "Sweater Weather",
+    artist: "The Neighbourhood",
+    album: "I Love You.",
+    coverGradient: "from-zinc-700 via-stone-800 to-black",
+    glowColors: ["#ffffff", "#71717a"],
+    duration: 36,
+    lyrics: [
+      {
+        text: "One love, two mouths",
+        start: 0.5,
+        end: 4.8,
+        words: [
+          { word: "One", start: 0.5, end: 1.2 },
+          { word: "love,", start: 1.3, end: 2.3 },
+          { word: "two", start: 2.4, end: 3.3 },
+          { word: "mouths", start: 3.4, end: 4.8 },
+        ],
+      },
+      {
+        text: "One love, one house",
+        start: 5.2,
+        end: 9.6,
+        words: [
+          { word: "One", start: 5.2, end: 6.0 },
+          { word: "love,", start: 6.1, end: 7.1 },
+          { word: "one", start: 7.2, end: 8.1 },
+          { word: "house", start: 8.2, end: 9.6 },
+        ],
+      },
+      {
+        text: "No shirt, no blouse",
+        start: 10.0,
+        end: 14.2,
+        words: [
+          { word: "No", start: 10.0, end: 10.9 },
+          { word: "shirt,", start: 11.0, end: 11.9 },
+          { word: "no", start: 12.0, end: 12.9 },
+          { word: "blouse", start: 13.0, end: 14.2 },
+        ],
+      },
+      {
+        text: "Just us, you find out",
+        start: 14.8,
+        end: 19.4,
+        words: [
+          { word: "Just", start: 14.8, end: 15.6 },
+          { word: "us,", start: 15.7, end: 16.6 },
+          { word: "you", start: 16.7, end: 17.6 },
+          { word: "find", start: 17.7, end: 18.5 },
+          { word: "out", start: 18.6, end: 19.4 },
+        ],
+      },
+      {
+        text: "Nothing that I wouldn't wanna tell you about, no",
+        start: 20.0,
+        end: 27.0,
+        words: [
+          { word: "Nothing", start: 20.0, end: 20.8 },
+          { word: "that", start: 20.9, end: 21.4 },
+          { word: "I", start: 21.5, end: 21.9 },
+          { word: "wouldn't", start: 22.0, end: 22.8 },
+          { word: "wanna", start: 22.9, end: 23.6 },
+          { word: "tell", start: 23.7, end: 24.4 },
+          { word: "you", start: 24.5, end: 25.1 },
+          { word: "about,", start: 25.2, end: 26.0 },
+          { word: "no", start: 26.1, end: 27.0 },
+        ],
+      },
+      {
+        text: "'Cause it's too cold for you here",
+        start: 27.6,
+        end: 35.0,
+        words: [
+          { word: "'Cause", start: 27.6, end: 28.5 },
+          { word: "it's", start: 28.6, end: 29.3 },
+          { word: "too", start: 29.4, end: 30.4 },
+          { word: "cold", start: 30.5, end: 31.8 },
+          { word: "for", start: 31.9, end: 32.6 },
+          { word: "you", start: 32.7, end: 33.6 },
+          { word: "here", start: 33.7, end: 35.0 },
+        ],
+      },
+    ],
+  },
+  {
     id: "blinding-lights",
     title: "Blinding Lights",
     artist: "The Weeknd",

@@ -35,10 +35,10 @@ const GLOW_PRESETS: { name: string; colors: [string, string] }[] = [
 ];
 
 const LYRIC_STYLES: { id: LyricStyle; label: string }[] = [
+  { id: "constellation", label: "Constellation Starmap (Featured)" },
   { id: "karaoke", label: "Karaoke Glow" },
   { id: "fisheye", label: "Fisheye Lens" },
   { id: "waveform", label: "Waveform Bounce" },
-  { id: "constellation", label: "Constellation" },
   { id: "typewriter", label: "Typewriter" },
 ];
 
@@ -59,8 +59,8 @@ export function CombinedStudio() {
   const [isAudioReactive, setIsAudioReactive] = useState(true);
   const [bassPulse, setBassPulse] = useState(0);
 
-  // LyricGod settings
-  const [lyricStyle, setLyricStyle] = useState<LyricStyle>("karaoke");
+  // LyricGod settings (Default to the viral Constellation Starmap)
+  const [lyricStyle, setLyricStyle] = useState<LyricStyle>("constellation");
   const [fontSize, setFontSize] = useState(24);
 
   // Fullscreen state
@@ -103,14 +103,14 @@ export function CombinedStudio() {
     ? spotify.currentTrack.albumArt
     : null;
 
-  // Simple LRC parser
+  // High-accuracy LRC parser with dynamic inter-line gap detection
   const parseLrc = useCallback((lrc: string) => {
-    const lines = lrc.split("\n");
-    const result = [];
+    const rawLines = lrc.split("\n");
+    const parsedRaw: { timeInSecs: number; text: string }[] = [];
     const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/;
 
-    for (let i = 0; i < lines.length; i++) {
-      const match = lines[i].match(timeRegex);
+    for (let i = 0; i < rawLines.length; i++) {
+      const match = rawLines[i].match(timeRegex);
       if (match) {
         const mins = parseInt(match[1]);
         const secs = parseInt(match[2]);
@@ -118,27 +118,42 @@ export function CombinedStudio() {
         const timeInSecs =
           mins * 60 + secs + millis / (match[3].length === 2 ? 100 : 1000);
         const text = match[4].trim();
-
         if (text) {
-          const wordsArr = text.split(" ").filter(Boolean);
-          const lineDuration = 3.5;
-          const wordDuration = lineDuration / (wordsArr.length || 1);
-
-          const words = wordsArr.map((w, wIdx) => ({
-            word: w,
-            start: timeInSecs + wIdx * wordDuration,
-            end: timeInSecs + (wIdx + 1) * wordDuration,
-          }));
-
-          result.push({
-            text,
-            start: timeInSecs,
-            end: timeInSecs + lineDuration,
-            words,
-          });
+          parsedRaw.push({ timeInSecs, text });
         }
       }
     }
+
+    // Sort chronologically
+    parsedRaw.sort((a, b) => a.timeInSecs - b.timeInSecs);
+
+    const result = [];
+    for (let i = 0; i < parsedRaw.length; i++) {
+      const { timeInSecs, text } = parsedRaw[i];
+      const nextTime = parsedRaw[i + 1]?.timeInSecs;
+      
+      // Calculate realistic line duration by looking ahead to the next line
+      const gap = nextTime ? Math.max(1.5, nextTime - timeInSecs) : 4.0;
+      // Cap vocal duration so long instrumental breaks don't stretch words
+      const lineDuration = Math.min(gap * 0.92, 5.5);
+
+      const wordsArr = text.split(" ").filter(Boolean);
+      const wordDuration = lineDuration / (wordsArr.length || 1);
+
+      const words = wordsArr.map((w, wIdx) => ({
+        word: w,
+        start: timeInSecs + wIdx * wordDuration,
+        end: timeInSecs + (wIdx + 1) * wordDuration,
+      }));
+
+      result.push({
+        text,
+        start: timeInSecs,
+        end: timeInSecs + lineDuration,
+        words,
+      });
+    }
+
     return result;
   }, []);
 
@@ -636,6 +651,7 @@ export function CombinedStudio() {
                 style={lyricStyle}
                 fontSize={fontSize}
                 glowColor={glowColors[0]}
+                bassPulse={bassPulse}
               />
             )}
 

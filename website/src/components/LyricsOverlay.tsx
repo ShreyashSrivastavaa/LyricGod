@@ -3,6 +3,7 @@
 import React, { useMemo } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import { LyricLine, LyricStyle } from "../lib/types";
+import { ConstellationLyrics } from "./ConstellationLyrics";
 
 interface LyricsOverlayProps {
   lyrics: LyricLine[];
@@ -10,6 +11,7 @@ interface LyricsOverlayProps {
   style: LyricStyle;
   fontSize: number;
   glowColor: string;
+  bassPulse?: number;
 }
 
 export function LyricsOverlay({
@@ -18,6 +20,7 @@ export function LyricsOverlay({
   style,
   fontSize,
   glowColor,
+  bassPulse = 0,
 }: LyricsOverlayProps) {
   // Find currently active line and upcoming lines
   const { currentLineIndex, currentLine } = useMemo(() => {
@@ -42,6 +45,20 @@ export function LyricsOverlay({
 
   const prevLine = lyrics[currentLineIndex - 1];
   const nextLine = lyrics[currentLineIndex + 1];
+
+  // If Constellation style is selected, render the dedicated Starmap Crosshair Visualizer
+  if (style === "constellation") {
+    return (
+      <ConstellationLyrics
+        currentLine={currentLine}
+        prevLine={prevLine}
+        nextLine={nextLine}
+        currentTime={currentTime}
+        glowColor={glowColor}
+        bassPulse={bassPulse}
+      />
+    );
+  }
 
   // Helper to determine if a word is currently spoken/sung
   const renderLineWords = (line: LyricLine) => {
@@ -88,25 +105,6 @@ export function LyricsOverlay({
                 }}
                 transition={{ type: "spring", stiffness: 300, damping: 20 }}
                 className="font-medium inline-block"
-              >
-                {w.word}
-              </motion.span>
-            );
-          }
-
-          if (style === "constellation") {
-            return (
-              <motion.span
-                key={idx}
-                initial={{ opacity: 0.3 }}
-                animate={{
-                  opacity: isCurrent ? 1 : isPassed ? 0.75 : 0.25,
-                  scale: isCurrent ? 1.15 : 1,
-                  textShadow: isCurrent ? `0 0 20px ${glowColor}, 0 0 40px ${glowColor}` : "none",
-                }}
-                className={`inline-block tracking-wide font-mono ${
-                  isCurrent ? "text-white" : "text-zinc-400"
-                }`}
               >
                 {w.word}
               </motion.span>
