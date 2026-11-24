@@ -620,7 +620,7 @@ export function ConstellationLyrics({
 
       {/* 2. Main Constellation Graph Group: Camera centered around active node */}
       <motion.div
-        className="absolute pointer-events-none"
+        className="absolute top-0 left-0 pointer-events-none"
         animate={{
           x: dimensions.width / 2 + cameraTargetX + ambientDriftX,
           y: dimensions.height / 2 + cameraTargetY + ambientDriftY,
