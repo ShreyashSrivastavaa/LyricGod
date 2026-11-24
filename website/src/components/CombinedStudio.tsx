@@ -6,15 +6,15 @@ import {
   Play,
   Pause,
   ArrowsOut,
-  SlidersHorizontal,
   Sparkle,
   MusicNotes,
   Waveform,
   TextAa,
   MagnifyingGlass,
   ArrowClockwise,
-  UploadSimple,
-  Check,
+  WarningCircle,
+  CircleNotch,
+  SignOut,
 } from "@phosphor-icons/react";
 import { SAMPLE_TRACKS } from "../lib/sampleTracks";
 import { TrackInfo, ViewMode, LyricStyle } from "../lib/types";
@@ -22,11 +22,7 @@ import { audioEngine } from "../lib/audioEngine";
 import { AmbientGlowOverlay } from "./AmbientGlowOverlay";
 import { LyricsOverlay } from "./LyricsOverlay";
 import { SpotifyModal } from "./SpotifyModal";
-import {
-  fetchCurrentlyPlaying,
-  extractTokenFromHash,
-  SpotifyTrack,
-} from "../lib/spotify";
+import { useSpotifyPlayer } from "../lib/spotify";
 
 const GLOW_PRESETS: { name: string; colors: [string, string] }[] = [
   { name: "Cyberpunk", colors: ["#6366f1", "#06b6d4"] },
@@ -47,8 +43,8 @@ const LYRIC_STYLES: { id: LyricStyle; label: string }[] = [
 export function CombinedStudio() {
   const [tracks, setTracks] = useState<TrackInfo[]>(SAMPLE_TRACKS);
   const [currentTrackIndex, setCurrentTrackIndex] = useState(0);
-  const [isPlaying, setIsPlaying] = useState(false);
-  const [currentTime, setCurrentTime] = useState(0);
+  const [localIsPlaying, setLocalIsPlaying] = useState(false);
+  const [localCurrentTime, setLocalCurrentTime] = useState(0);
   const [mode, setMode] = useState<ViewMode>("combined");
 
   // AuraGlow settings
@@ -74,48 +70,190 @@ export function CombinedStudio() {
   const [isSearching, setIsSearching] = useState(false);
   const [searchStatus, setSearchStatus] = useState<string | null>(null);
 
-  // Spotify live integration states
-  const [spotifyToken, setSpotifyToken] = useState<string | null>(null);
+  // Spotify integration via hook
+  const spotify = useSpotifyPlayer();
   const [isSpotifyModalOpen, setIsSpotifyModalOpen] = useState(false);
-  const [spotifyTrack, setSpotifyTrack] = useState<SpotifyTrack | null>(null);
-  const [spotifyStatus, setSpotifyStatus] = useState<string>("Not connected");
+  const [isResyncing, setIsResyncing] = useState(false);
+  const [lyricsNotice, setLyricsNotice] = useState<string | null>(null);
   const lastSpotifyTrackIdRef = useRef<string | null>(null);
 
+  const isSpotifyConnected = spotify.status === "connected";
+  const isSpotifyActive = isSpotifyConnected && !!spotify.currentTrack;
+
+  // Active track information
   const currentTrack = tracks[currentTrackIndex] || tracks[0];
 
-  // Check for Spotify OAuth callback or saved token on mount
-  useEffect(() => {
-    // 1. Check for token in hash (Direct Spotify Implicit Login)
-    const hashToken = extractTokenFromHash();
-    if (hashToken) {
-      setSpotifyToken(hashToken);
-      return;
-    }
+  // Active playback variables (switches cleanly between Spotify live playback and local demo)
+  const activeCurrentTime = isSpotifyActive ? spotify.progressSec : localCurrentTime;
+  const activeIsPlaying = isSpotifyActive
+    ? spotify.playbackState === "playing"
+    : localIsPlaying;
+  const activeDuration = isSpotifyActive && spotify.currentTrack
+    ? spotify.currentTrack.durationMs / 1000
+    : currentTrack.duration;
+  const activeTitle = isSpotifyActive && spotify.currentTrack
+    ? spotify.currentTrack.title
+    : currentTrack.title;
+  const activeArtist = isSpotifyActive && spotify.currentTrack
+    ? spotify.currentTrack.artist
+    : currentTrack.artist;
+  const activeAlbumArt = isSpotifyActive && spotify.currentTrack?.albumArt
+    ? spotify.currentTrack.albumArt
+    : null;
 
-    // 2. Fallback to existing saved token
-    const savedToken = localStorage.getItem("spotify_access_token");
-    if (savedToken) {
-      setSpotifyToken(savedToken);
+  // Simple LRC parser
+  const parseLrc = useCallback((lrc: string) => {
+    const lines = lrc.split("\n");
+    const result = [];
+    const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/;
+
+    for (let i = 0; i < lines.length; i++) {
+      const match = lines[i].match(timeRegex);
+      if (match) {
+        const mins = parseInt(match[1]);
+        const secs = parseInt(match[2]);
+        const millis = parseInt(match[3]);
+        const timeInSecs =
+          mins * 60 + secs + millis / (match[3].length === 2 ? 100 : 1000);
+        const text = match[4].trim();
+
+        if (text) {
+          const wordsArr = text.split(" ").filter(Boolean);
+          const lineDuration = 3.5;
+          const wordDuration = lineDuration / (wordsArr.length || 1);
+
+          const words = wordsArr.map((w, wIdx) => ({
+            word: w,
+            start: timeInSecs + wIdx * wordDuration,
+            end: timeInSecs + (wIdx + 1) * wordDuration,
+          }));
+
+          result.push({
+            text,
+            start: timeInSecs,
+            end: timeInSecs + lineDuration,
+            words,
+          });
+        }
+      }
     }
+    return result;
   }, []);
 
-  // Sync colors when track changes
+  // Fetch LRCLIB lyrics for Spotify song
+  const fetchLyricsForSpotifyTrack = useCallback(
+    async (
+      title: string,
+      artist: string,
+      albumArt: string,
+      duration: number
+    ) => {
+      try {
+        setLyricsNotice("Fetching synchronized lyrics from LRCLIB...");
+        const res = await fetch(
+          `https://lrclib.net/api/search?q=${encodeURIComponent(title + " " + artist)}`
+        );
+        const data = await res.json();
+        if (data && data.length > 0) {
+          const hit = data[0];
+          if (hit.syncedLyrics) {
+            const parsed = parseLrc(hit.syncedLyrics);
+            if (parsed.length > 0) {
+              const spotifyGeneratedTrack: TrackInfo = {
+                id: `spotify-${Date.now()}`,
+                title,
+                artist,
+                album: hit.albumName || "Spotify Live",
+                coverGradient: "from-emerald-600 via-teal-600 to-indigo-900",
+                glowColors: ["#10b981", "#6366f1"],
+                duration: duration || hit.duration || 180,
+                lyrics: parsed,
+              };
+              setTracks((prev) => [spotifyGeneratedTrack, ...prev]);
+              setCurrentTrackIndex(0);
+              setLyricsNotice(null);
+              return;
+            }
+          }
+        }
+
+        // Fallback placeholder when track is not in LRCLIB synced database
+        const fallbackLines = [
+          {
+            text: `${title}`,
+            start: 0,
+            end: duration || 180,
+            words: title.split(" ").filter(Boolean).map((w, idx) => ({
+              word: w,
+              start: idx * 0.8,
+              end: (idx + 1) * 0.8,
+            })),
+          },
+          {
+            text: `by ${artist}`,
+            start: 3,
+            end: duration || 180,
+            words: `by ${artist}`.split(" ").filter(Boolean).map((w, idx) => ({
+              word: w,
+              start: 3 + idx * 0.8,
+              end: 3 + (idx + 1) * 0.8,
+            })),
+          },
+        ];
+
+        const fallbackTrack: TrackInfo = {
+          id: `spotify-${Date.now()}`,
+          title,
+          artist,
+          album: "Spotify Live",
+          coverGradient: "from-emerald-600 via-teal-600 to-indigo-900",
+          glowColors: ["#10b981", "#3b82f6"],
+          duration: duration || 180,
+          lyrics: fallbackLines,
+        };
+        setTracks((prev) => [fallbackTrack, ...prev]);
+        setCurrentTrackIndex(0);
+        setLyricsNotice("Synced lyrics not yet in LRCLIB • Displaying live track info");
+      } catch (err) {
+        console.error("Could not fetch lyrics for Spotify track", err);
+        setLyricsNotice("Could not load external lyrics • Displaying live track");
+      }
+    },
+    [parseLrc]
+  );
+
+  // Detect when Spotify track changes
   useEffect(() => {
-    setGlowColors(currentTrack.glowColors);
-    setCurrentTime(0);
-    audioEngine.reset();
-    if (isPlaying && !spotifyToken) {
-      audioEngine.startBeat((t) => setCurrentTime(t % currentTrack.duration));
+    if (!isSpotifyConnected || !spotify.currentTrack) return;
+
+    if (spotify.currentTrack.id !== lastSpotifyTrackIdRef.current) {
+      lastSpotifyTrackIdRef.current = spotify.currentTrack.id;
+      fetchLyricsForSpotifyTrack(
+        spotify.currentTrack.title,
+        spotify.currentTrack.artist,
+        spotify.currentTrack.albumArt,
+        spotify.currentTrack.durationMs / 1000
+      );
     }
-  }, [currentTrackIndex, currentTrack, spotifyToken]);
+  }, [
+    isSpotifyConnected,
+    spotify.currentTrack,
+    fetchLyricsForSpotifyTrack,
+  ]);
 
   // Audio animation loop for bass beat reactivity
   useEffect(() => {
     let animId: number;
     const updateAudioMeters = () => {
-      if (isPlaying) {
-        const bass = audioEngine.getBassEnergy();
-        setBassPulse(bass);
+      if (activeIsPlaying) {
+        if (isSpotifyConnected) {
+          // Rhythmic harmonic pulse when listening to Spotify
+          const pulse = (Math.sin(activeCurrentTime * 4.5) + 1) * 0.35;
+          setBassPulse(pulse);
+        } else {
+          const bass = audioEngine.getBassEnergy();
+          setBassPulse(bass);
+        }
       } else {
         setBassPulse(0);
       }
@@ -123,111 +261,49 @@ export function CombinedStudio() {
     };
     animId = requestAnimationFrame(updateAudioMeters);
     return () => cancelAnimationFrame(animId);
-  }, [isPlaying]);
+  }, [activeIsPlaying, isSpotifyConnected, activeCurrentTime]);
 
-  // Spotify Polling Loop: continuously syncs with user's Spotify audio playback
+  // Reset local beat engine when changing sample track
   useEffect(() => {
-    if (!spotifyToken) return;
-
-    let isSubscribed = true;
-    let pollInterval: NodeJS.Timeout;
-
-    const pollSpotify = async () => {
-      try {
-        const live = await fetchCurrentlyPlaying(spotifyToken);
-        if (!isSubscribed) return;
-
-        if (live && live.title) {
-          setSpotifyTrack(live);
-          setSpotifyStatus(`Playing: ${live.title}`);
-          setIsPlaying(live.isPlaying);
-          setCurrentTime(live.progressMs / 1000);
-
-          // If track changed, fetch lyrics for this new Spotify song
-          if (live.id !== lastSpotifyTrackIdRef.current) {
-            lastSpotifyTrackIdRef.current = live.id;
-            fetchLyricsForSpotifyTrack(live.title, live.artist, live.albumArt, live.durationMs / 1000);
-          }
-        } else {
-          setSpotifyStatus("Connected — Start playing a song in Spotify!");
-        }
-      } catch (e) {
-        console.error("Spotify poll error:", e);
+    if (!isSpotifyActive) {
+      setGlowColors(currentTrack.glowColors);
+      setLocalCurrentTime(0);
+      audioEngine.reset();
+      if (localIsPlaying) {
+        audioEngine.startBeat((t) => setLocalCurrentTime(t % currentTrack.duration));
       }
-    };
-
-    pollSpotify();
-    pollInterval = setInterval(pollSpotify, 1500);
-
-    return () => {
-      isSubscribed = false;
-      clearInterval(pollInterval);
-    };
-  }, [spotifyToken]);
-
-  // Smooth interpolation timer when Spotify is actively playing between polls
-  useEffect(() => {
-    if (!spotifyToken || !isPlaying) return;
-
-    const timer = setInterval(() => {
-      setCurrentTime((prev) => prev + 0.1);
-    }, 100);
-
-    return () => clearInterval(timer);
-  }, [spotifyToken, isPlaying]);
-
-  // Fetch LRCLIB lyrics for whatever track is playing on Spotify
-  const fetchLyricsForSpotifyTrack = async (
-    title: string,
-    artist: string,
-    albumArt: string,
-    duration: number
-  ) => {
-    try {
-      const res = await fetch(
-        `https://lrclib.net/api/search?q=${encodeURIComponent(title + " " + artist)}`
-      );
-      const data = await res.json();
-      if (data && data.length > 0) {
-        const hit = data[0];
-        if (hit.syncedLyrics) {
-          const parsed = parseLrc(hit.syncedLyrics);
-          if (parsed.length > 0) {
-            const spotifyGeneratedTrack: TrackInfo = {
-              id: `spotify-${Date.now()}`,
-              title,
-              artist,
-              album: hit.albumName || "Spotify Live",
-              coverGradient: "from-emerald-600 via-teal-600 to-indigo-900",
-              glowColors: ["#10b981", "#6366f1"],
-              duration: duration || hit.duration || 180,
-              lyrics: parsed,
-            };
-            setTracks((prev) => [spotifyGeneratedTrack, ...prev]);
-            setCurrentTrackIndex(0);
-          }
-        }
-      }
-    } catch (err) {
-      console.error("Could not fetch lyrics for Spotify track", err);
     }
-  };
+  }, [currentTrackIndex, currentTrack, isSpotifyActive, localIsPlaying]);
 
+  // Local play/pause toggle for sample tracks
   const togglePlayback = () => {
-    if (isPlaying) {
+    if (isSpotifyConnected) {
+      // Manual resync trigger when connected to Spotify
+      handleManualResync();
+      return;
+    }
+
+    if (localIsPlaying) {
       audioEngine.pause();
-      setIsPlaying(false);
+      setLocalIsPlaying(false);
     } else {
       audioEngine.startBeat((t) => {
-        setCurrentTime(t % currentTrack.duration);
+        setLocalCurrentTime(t % currentTrack.duration);
       });
-      setIsPlaying(true);
+      setLocalIsPlaying(true);
     }
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (isSpotifyConnected) return; // Spotify playback is controlled from the user's Spotify app
     const newTime = parseFloat(e.target.value);
-    setCurrentTime(newTime);
+    setLocalCurrentTime(newTime);
+  };
+
+  const handleManualResync = async () => {
+    setIsResyncing(true);
+    await spotify.resync();
+    setTimeout(() => setIsResyncing(false), 500);
   };
 
   const toggleFullscreen = () => {
@@ -289,69 +365,16 @@ export function CombinedStudio() {
     }
   };
 
-  // Simple LRC parser
-  const parseLrc = (lrc: string) => {
-    const lines = lrc.split("\n");
-    const result = [];
-    const timeRegex = /\[(\d{2}):(\d{2})\.(\d{2,3})\](.*)/;
-
-    for (let i = 0; i < lines.length; i++) {
-      const match = lines[i].match(timeRegex);
-      if (match) {
-        const mins = parseInt(match[1]);
-        const secs = parseInt(match[2]);
-        const millis = parseInt(match[3]);
-        const timeInSecs =
-          mins * 60 + secs + millis / (match[3].length === 2 ? 100 : 1000);
-        const text = match[4].trim();
-
-        if (text) {
-          const wordsArr = text.split(" ");
-          const lineDuration = 3.5;
-          const wordDuration = lineDuration / wordsArr.length;
-
-          const words = wordsArr.map((w, wIdx) => ({
-            word: w,
-            start: timeInSecs + wIdx * wordDuration,
-            end: timeInSecs + (wIdx + 1) * wordDuration,
-          }));
-
-          result.push({
-            text,
-            start: timeInSecs,
-            end: timeInSecs + lineDuration,
-            words,
-          });
-        }
-      }
-    }
-    return result;
-  };
-
   return (
     <section id="studio" className="relative py-24 scroll-mt-12">
       {/* Spotify Modal */}
       <SpotifyModal
         isOpen={isSpotifyModalOpen}
         onClose={() => setIsSpotifyModalOpen(false)}
-        onConnectToken={(token) => setSpotifyToken(token)}
-        onLoadDirectTrack={(directTrack) => {
-          setSpotifyTrack(directTrack);
-          setIsPlaying(directTrack.isPlaying);
-          setCurrentTime(directTrack.progressMs / 1000);
-          fetchLyricsForSpotifyTrack(
-            directTrack.title,
-            directTrack.artist,
-            directTrack.albumArt,
-            directTrack.durationMs / 1000
-          );
-        }}
-        isConnected={!!spotifyToken}
-        onDisconnect={() => {
-          localStorage.removeItem("spotify_access_token");
-          setSpotifyToken(null);
-          setSpotifyTrack(null);
-        }}
+        isConnected={isSpotifyConnected}
+        user={spotify.user}
+        onDisconnect={spotify.disconnect}
+        isConnecting={spotify.status === "connecting"}
       />
 
       <div className="mx-auto max-w-[1400px] px-6">
@@ -367,7 +390,7 @@ export function CombinedStudio() {
             </h2>
             <p className="text-zinc-400 text-sm md:text-base mt-2 max-w-xl">
               Experience floating lyrics and screen-edge ambient lighting
-              dancing together in real time. Syncs directly with your Spotify audio.
+              dancing together in real time. Syncs directly with your Spotify account.
             </p>
           </div>
 
@@ -377,23 +400,50 @@ export function CombinedStudio() {
             <button
               onClick={() => setIsSpotifyModalOpen(true)}
               className={`flex items-center gap-2 rounded-full px-4 py-2 text-xs font-semibold transition-all ${
-                spotifyToken
-                  ? "border border-[#1DB954]/50 bg-[#1DB954]/15 text-[#1DB954] hover:bg-[#1DB954]/25"
+                isSpotifyConnected
+                  ? "border border-[#1DB954]/50 bg-[#1DB954]/15 text-[#1DB954] hover:bg-[#1DB954]/25 shadow-lg shadow-[#1DB954]/10"
+                  : spotify.status === "connecting"
+                  ? "border border-amber-500/40 bg-amber-500/10 text-amber-300"
                   : "border border-zinc-700 bg-zinc-900 text-zinc-300 hover:border-[#1DB954] hover:text-[#1DB954]"
               }`}
             >
-              <svg className="w-4 h-4 fill-current" viewBox="0 0 24 24">
+              <svg className="w-4 h-4 fill-current shrink-0" viewBox="0 0 24 24">
                 <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.494 17.306c-.216.353-.675.467-1.028.251-2.817-1.722-6.362-2.112-10.538-1.157-.402.093-.805-.157-.898-.56-.093-.403.158-.805.56-.898 4.571-1.045 8.492-.595 11.654 1.336.353.216.467.674.25 1.028zm1.467-3.262c-.272.443-.852.583-1.295.311-3.226-1.983-8.144-2.556-11.959-1.399-.499.152-1.031-.132-1.183-.631-.152-.499.132-1.031.631-1.183 4.367-1.325 9.789-.687 13.495 1.591.444.272.584.851.311 1.311zm.126-3.411C15.228 8.358 8.874 8.148 5.163 9.274c-.604.184-1.246-.16-1.43-.765-.183-.604.161-1.246.765-1.43 4.269-1.296 11.289-1.051 15.75 1.599.543.322.723 1.027.401 1.57-.323.543-1.028.723-1.571.401z" />
               </svg>
-              {spotifyToken ? (
+              {isSpotifyConnected ? (
                 <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 rounded-full bg-[#1DB954] animate-pulse" />
-                  Spotify Live Sync
+                  <span className="h-2 w-2 rounded-full bg-[#1DB954] animate-pulse" />
+                  {spotify.user?.displayName ? (
+                    <span className="max-w-[120px] truncate">{spotify.user.displayName}</span>
+                  ) : (
+                    "Spotify Connected"
+                  )}
+                </span>
+              ) : spotify.status === "connecting" ? (
+                <span className="flex items-center gap-1.5">
+                  <CircleNotch size={14} className="animate-spin" />
+                  Connecting...
                 </span>
               ) : (
                 "Connect Spotify"
               )}
             </button>
+
+            {/* Manual Resync Button (Visible when connected) */}
+            {isSpotifyConnected && (
+              <button
+                onClick={handleManualResync}
+                disabled={isResyncing}
+                title="Resync with Spotify"
+                className="flex items-center gap-1.5 rounded-full border border-zinc-700 bg-zinc-900 px-3 py-2 text-xs text-zinc-300 hover:text-white hover:border-zinc-500 transition-all disabled:opacity-50"
+              >
+                <ArrowClockwise
+                  size={14}
+                  className={isResyncing ? "animate-spin text-[#1DB954]" : ""}
+                />
+                <span className="hidden sm:inline">Sync</span>
+              </button>
+            )}
 
             {/* Mode Switcher Tabs */}
             <div className="inline-flex rounded-full border border-zinc-800 bg-zinc-950/80 p-1 backdrop-blur-md">
@@ -434,6 +484,54 @@ export function CombinedStudio() {
           </div>
         </div>
 
+        {/* Status / Notice Banners */}
+        {isSpotifyConnected && spotify.playbackState === "idle" && (
+          <div className="mb-4 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-4 text-xs text-zinc-300 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2.5">
+              <span className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse" />
+              <span>
+                <strong>Spotify is connected!</strong> Play any song in Spotify (Desktop, Web, or Mobile) to begin real-time sync.
+              </span>
+            </div>
+            <button
+              onClick={handleManualResync}
+              className="text-[#1DB954] font-medium hover:underline flex items-center gap-1 shrink-0"
+            >
+              <ArrowClockwise size={13} />
+              Check now
+            </button>
+          </div>
+        )}
+
+        {isSpotifyConnected && spotify.playbackState === "ad_or_podcast" && (
+          <div className="mb-4 rounded-2xl border border-amber-500/20 bg-amber-500/10 p-4 text-xs text-amber-200 flex items-center gap-2">
+            <WarningCircle size={16} className="text-amber-400 shrink-0" />
+            <span>Currently streaming an advertisement or podcast. Lyrics sync resumes automatically on the next song.</span>
+          </div>
+        )}
+
+        {spotify.errorMessage && (
+          <div className="mb-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-300 flex items-center justify-between gap-3">
+            <div className="flex items-center gap-2">
+              <WarningCircle size={16} className="text-rose-400 shrink-0" />
+              <span>{spotify.errorMessage}</span>
+            </div>
+            <button
+              onClick={handleManualResync}
+              className="rounded-full bg-rose-500/20 px-3 py-1 text-[11px] font-semibold text-white hover:bg-rose-500/30 transition-colors"
+            >
+              Retry
+            </button>
+          </div>
+        )}
+
+        {lyricsNotice && (
+          <div className="mb-4 rounded-xl border border-indigo-500/20 bg-indigo-500/5 px-4 py-2 text-[11px] text-indigo-300 flex items-center gap-2">
+            <Sparkle size={13} weight="fill" className="text-indigo-400 shrink-0" />
+            <span>{lyricsNotice}</span>
+          </div>
+        )}
+
         {/* Main Display Stage Container */}
         <div
           ref={studioRef}
@@ -459,33 +557,33 @@ export function CombinedStudio() {
           {/* Top Bar of the Studio (Now Playing badge + Spotify pill + Fullscreen toggle) */}
           <div className="relative z-30 flex items-center justify-between mb-8">
             <div className="flex items-center gap-3">
-              {spotifyTrack?.albumArt ? (
+              {activeAlbumArt ? (
                 /* eslint-disable-next-line @next/next/no-img-element */
                 <img
-                  src={spotifyTrack.albumArt}
-                  alt={spotifyTrack.title}
-                  className="w-12 h-12 rounded-xl object-cover shadow-lg border border-zinc-700"
+                  src={activeAlbumArt}
+                  alt={activeTitle}
+                  className="w-12 h-12 rounded-xl object-cover shadow-lg border border-zinc-700 shrink-0"
                 />
               ) : (
                 <div
-                  className={`w-12 h-12 rounded-xl bg-gradient-to-br ${currentTrack.coverGradient} shadow-lg flex items-center justify-center`}
+                  className={`w-12 h-12 rounded-xl bg-gradient-to-br ${currentTrack.coverGradient} shadow-lg flex items-center justify-center shrink-0`}
                 >
                   <MusicNotes size={20} className="text-white/80" />
                 </div>
               )}
-              <div>
+              <div className="min-w-0">
                 <div className="flex items-center gap-2">
-                  <h4 className="text-sm font-semibold text-white tracking-tight">
-                    {spotifyTrack ? spotifyTrack.title : currentTrack.title}
+                  <h4 className="text-sm font-semibold text-white tracking-tight truncate max-w-[220px] md:max-w-md">
+                    {activeTitle}
                   </h4>
-                  {spotifyToken && (
-                    <span className="rounded-full bg-[#1DB954]/20 border border-[#1DB954]/40 px-2 py-0.5 text-[10px] font-semibold text-[#1DB954]">
-                      Spotify Live
+                  {isSpotifyActive && (
+                    <span className="shrink-0 rounded-full bg-[#1DB954]/20 border border-[#1DB954]/40 px-2 py-0.5 text-[10px] font-semibold text-[#1DB954]">
+                      Live Sync
                     </span>
                   )}
                 </div>
-                <p className="text-xs text-zinc-400">
-                  {spotifyTrack ? spotifyTrack.artist : currentTrack.artist}
+                <p className="text-xs text-zinc-400 truncate max-w-[220px] md:max-w-md">
+                  {activeArtist}
                 </p>
               </div>
             </div>
@@ -495,11 +593,11 @@ export function CombinedStudio() {
                 onClick={() => setIsSpotifyModalOpen(true)}
                 className="flex items-center gap-1.5 rounded-full border border-zinc-700/60 bg-zinc-900/60 px-3.5 py-1.5 text-xs text-zinc-300 backdrop-blur-md transition-all hover:border-[#1DB954] hover:text-white"
               >
-                <svg className="w-3.5 h-3.5 fill-[#1DB954]" viewBox="0 0 24 24">
+                <svg className="w-3.5 h-3.5 fill-[#1DB954] shrink-0" viewBox="0 0 24 24">
                   <path d="M12 0C5.373 0 0 5.373 0 12s5.373 12 12 12 12-5.373 12-12S18.627 0 12 0zm5.494 17.306c-.216.353-.675.467-1.028.251-2.817-1.722-6.362-2.112-10.538-1.157-.402.093-.805-.157-.898-.56-.093-.403.158-.805.56-.898 4.571-1.045 8.492-.595 11.654 1.336.353.216.467.674.25 1.028zm1.467-3.262c-.272.443-.852.583-1.295.311-3.226-1.983-8.144-2.556-11.959-1.399-.499.152-1.031-.132-1.183-.631-.152-.499.132-1.031.631-1.183 4.367-1.325 9.789-.687 13.495 1.591.444.272.584.851.311 1.311zm.126-3.411C15.228 8.358 8.874 8.148 5.163 9.274c-.604.184-1.246-.16-1.43-.765-.183-.604.161-1.246.765-1.43 4.269-1.296 11.289-1.051 15.75 1.599.543.322.723 1.027.401 1.57-.323.543-1.028.723-1.571.401z" />
                 </svg>
                 <span className="hidden sm:inline">
-                  {spotifyToken ? "Spotify Connected" : "Sync Spotify"}
+                  {isSpotifyConnected ? "Spotify Connected" : "Connect Spotify"}
                 </span>
               </button>
 
@@ -520,7 +618,7 @@ export function CombinedStudio() {
             {(mode === "combined" || mode === "lyrics") && (
               <LyricsOverlay
                 lyrics={currentTrack.lyrics}
-                currentTime={currentTime}
+                currentTime={activeCurrentTime}
                 style={lyricStyle}
                 fontSize={fontSize}
                 glowColor={glowColors[0]}
@@ -537,7 +635,7 @@ export function CombinedStudio() {
                       style={{
                         height: `${
                           14 +
-                          Math.sin(i * 0.4 + currentTime * 2) * 20 +
+                          Math.sin(i * 0.4 + activeCurrentTime * 2) * 20 +
                           bassPulse * 30
                         }px`,
                       }}
@@ -559,28 +657,24 @@ export function CombinedStudio() {
             {/* Scrubber */}
             <div className="flex items-center gap-3 mb-3">
               <span className="text-[11px] font-mono text-zinc-500 w-8 text-right">
-                {Math.floor(currentTime / 60)}:
-                {Math.floor(currentTime % 60)
+                {Math.floor(activeCurrentTime / 60)}:
+                {Math.floor(activeCurrentTime % 60)
                   .toString()
                   .padStart(2, "0")}
               </span>
               <input
                 type="range"
                 min="0"
-                max={spotifyTrack ? spotifyTrack.durationMs / 1000 : currentTrack.duration}
+                max={activeDuration}
                 step="0.1"
-                value={currentTime}
+                value={activeCurrentTime}
                 onChange={handleSeek}
-                className="flex-1 h-1.5 rounded-lg bg-zinc-800 accent-indigo-500 cursor-pointer"
+                disabled={isSpotifyConnected}
+                className="flex-1 h-1.5 rounded-lg bg-zinc-800 accent-indigo-500 cursor-pointer disabled:cursor-default disabled:opacity-75"
               />
               <span className="text-[11px] font-mono text-zinc-500 w-8">
-                {Math.floor(
-                  (spotifyTrack ? spotifyTrack.durationMs / 1000 : currentTrack.duration) / 60
-                )}
-                :
-                {Math.floor(
-                  (spotifyTrack ? spotifyTrack.durationMs / 1000 : currentTrack.duration) % 60
-                )
+                {Math.floor(activeDuration / 60)}:
+                {Math.floor(activeDuration % 60)
                   .toString()
                   .padStart(2, "0")}
               </span>
@@ -601,12 +695,13 @@ export function CombinedStudio() {
                 ))}
               </select>
 
-              {/* Central Play/Pause */}
+              {/* Central Play/Pause or Resync */}
               <button
                 onClick={togglePlayback}
+                title={isSpotifyConnected ? "Spotify Live Sync Active" : "Play / Pause Demo"}
                 className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-950 transition-transform hover:scale-105 active:scale-95 shadow-lg shadow-white/10"
               >
-                {isPlaying ? (
+                {activeIsPlaying ? (
                   <Pause size={18} weight="fill" />
                 ) : (
                   <Play size={18} weight="fill" className="ml-0.5" />
@@ -614,19 +709,32 @@ export function CombinedStudio() {
               </button>
 
               <div className="flex items-center gap-2">
-                <button
-                  onClick={() => {
-                    setCurrentTime(0);
-                    audioEngine.reset();
-                    if (isPlaying && !spotifyToken) {
-                      audioEngine.startBeat((t) => setCurrentTime(t % currentTrack.duration));
-                    }
-                  }}
-                  className="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800"
-                  title="Restart Track"
-                >
-                  <ArrowClockwise size={16} />
-                </button>
+                {isSpotifyConnected ? (
+                  <button
+                    onClick={handleManualResync}
+                    className="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors"
+                    title="Manual Resync with Spotify"
+                  >
+                    <ArrowClockwise
+                      size={16}
+                      className={isResyncing ? "animate-spin text-[#1DB954]" : ""}
+                    />
+                  </button>
+                ) : (
+                  <button
+                    onClick={() => {
+                      setLocalCurrentTime(0);
+                      audioEngine.reset();
+                      if (localIsPlaying) {
+                        audioEngine.startBeat((t) => setLocalCurrentTime(t % currentTrack.duration));
+                      }
+                    }}
+                    className="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800"
+                    title="Restart Track"
+                  >
+                    <ArrowClockwise size={16} />
+                  </button>
+                )}
               </div>
             </div>
           </div>
