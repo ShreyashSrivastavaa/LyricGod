@@ -1,0 +1,10 @@
+{
+  "name": "lyricgod-root",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "npm --prefix website run dev",
+    "build": "npm --prefix website run build",
+    "start": "npm --prefix website run start"
+  }
+}
