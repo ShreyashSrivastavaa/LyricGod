@@ -6,6 +6,7 @@ const SPOTIFY_TOKEN_ENDPOINT = "https://accounts.spotify.com/api/token";
 export const SPOTIFY_SCOPES = [
   "user-read-currently-playing",
   "user-read-playback-state",
+  "user-modify-playback-state",
 ].join(" ");
 
 // Helper to sanitize local dev URLs for Spotify (replacing localhost with 127.0.0.1)

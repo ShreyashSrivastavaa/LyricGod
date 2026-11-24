@@ -7,7 +7,15 @@ import {
   initiateSpotifyLogin,
   isSpotifyAuthenticated,
 } from "./auth";
-import { fetchCurrentlyPlaying, fetchUserProfile } from "./api";
+import {
+  fetchCurrentlyPlaying,
+  fetchUserProfile,
+  resumePlayback,
+  pausePlayback,
+  seekPlayback,
+  nextTrack,
+  previousTrack,
+} from "./api";
 import { SpotifyTrack, SpotifyUser, PlaybackResult } from "./types";
 
 export type ConnectionStatus = "disconnected" | "connecting" | "connected" | "error";
@@ -159,6 +167,69 @@ export function useSpotifyPlayer() {
     return () => cancelAnimationFrame(animId);
   }, [playbackState, currentTrack]);
 
+  // Playback control actions
+  const togglePlay = useCallback(async () => {
+    const token = await getValidAccessToken();
+    if (!token) return;
+
+    const willPlay = playbackState !== "playing";
+
+    // Optimistically toggle UI state for instant responsive feedback
+    setPlaybackState(willPlay ? "playing" : "paused");
+    if (currentTrack) {
+      setCurrentTrack({ ...currentTrack, isPlaying: willPlay });
+    }
+
+    try {
+      const res = willPlay
+        ? await resumePlayback(token)
+        : await pausePlayback(token);
+
+      if (!res.success) {
+        if (res.error) setErrorMessage(res.error);
+        // Resync after short delay to align with server state
+        setTimeout(() => poll(true), 1000);
+      } else {
+        setErrorMessage(null);
+        setTimeout(() => poll(true), 600);
+      }
+    } catch {
+      setTimeout(() => poll(true), 1000);
+    }
+  }, [playbackState, currentTrack, poll]);
+
+  const seek = useCallback(
+    async (sec: number) => {
+      setInterpolatedProgressSec(sec);
+      lastProgressRef.current = sec;
+
+      const token = await getValidAccessToken();
+      if (!token) return;
+
+      try {
+        await seekPlayback(token, sec * 1000);
+        setTimeout(() => poll(true), 500);
+      } catch (err) {
+        console.error("Seek error:", err);
+      }
+    },
+    [poll]
+  );
+
+  const skipNext = useCallback(async () => {
+    const token = await getValidAccessToken();
+    if (!token) return;
+    await nextTrack(token);
+    setTimeout(() => poll(true), 600);
+  }, [poll]);
+
+  const skipPrevious = useCallback(async () => {
+    const token = await getValidAccessToken();
+    if (!token) return;
+    await previousTrack(token);
+    setTimeout(() => poll(true), 600);
+  }, [poll]);
+
   // Actions
   const connect = useCallback(async (customClientId?: string) => {
     setStatus("connecting");
@@ -195,5 +266,9 @@ export function useSpotifyPlayer() {
     connect,
     disconnect,
     resync,
+    togglePlay,
+    seek,
+    skipNext,
+    skipPrevious,
   };
 }

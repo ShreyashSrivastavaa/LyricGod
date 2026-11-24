@@ -91,3 +91,110 @@ export async function fetchUserProfile(token: string): Promise<SpotifyUser | nul
     return null;
   }
 }
+
+export async function resumePlayback(token: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${SPOTIFY_API_BASE}/me/player/play`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (res.status === 204 || res.ok) {
+      return { success: true };
+    }
+
+    if (res.status === 403) {
+      const data = await res.json().catch(() => ({}));
+      const reason = data?.error?.reason || data?.error?.message;
+      if (reason === "PREMIUM_REQUIRED") {
+        return { success: false, error: "Controlling playback via API requires Spotify Premium. Please play/pause in your Spotify app." };
+      }
+      return { success: false, error: "Playback permission required. Please reconnect your Spotify account." };
+    }
+
+    if (res.status === 404) {
+      return { success: false, error: "No active Spotify player found. Start playing in your Spotify app first." };
+    }
+
+    return { success: false, error: `Failed to resume playback (HTTP ${res.status})` };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "Network error" };
+  }
+}
+
+export async function pausePlayback(token: string): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${SPOTIFY_API_BASE}/me/player/pause`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (res.status === 204 || res.ok) {
+      return { success: true };
+    }
+
+    if (res.status === 403) {
+      const data = await res.json().catch(() => ({}));
+      const reason = data?.error?.reason || data?.error?.message;
+      if (reason === "PREMIUM_REQUIRED") {
+        return { success: false, error: "Controlling playback via API requires Spotify Premium. Please play/pause in your Spotify app." };
+      }
+      return { success: false, error: "Playback permission required. Please reconnect your Spotify account." };
+    }
+
+    if (res.status === 404) {
+      return { success: false, error: "No active Spotify player found." };
+    }
+
+    return { success: false, error: `Failed to pause playback (HTTP ${res.status})` };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "Network error" };
+  }
+}
+
+export async function seekPlayback(token: string, positionMs: number): Promise<{ success: boolean; error?: string }> {
+  try {
+    const res = await fetch(`${SPOTIFY_API_BASE}/me/player/seek?position_ms=${Math.floor(positionMs)}`, {
+      method: "PUT",
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (res.status === 204 || res.ok) {
+      return { success: true };
+    }
+
+    return { success: false, error: "Could not seek track" };
+  } catch (err) {
+    return { success: false, error: err instanceof Error ? err.message : "Network error" };
+  }
+}
+
+export async function nextTrack(token: string): Promise<{ success: boolean }> {
+  try {
+    const res = await fetch(`${SPOTIFY_API_BASE}/me/player/next`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return { success: res.status === 204 || res.ok };
+  } catch {
+    return { success: false };
+  }
+}
+
+export async function previousTrack(token: string): Promise<{ success: boolean }> {
+  try {
+    const res = await fetch(`${SPOTIFY_API_BASE}/me/player/previous`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    return { success: res.status === 204 || res.ok };
+  } catch {
+    return { success: false };
+  }
+}

@@ -5,6 +5,8 @@ import { motion, AnimatePresence } from "motion/react";
 import {
   Play,
   Pause,
+  SkipBack,
+  SkipForward,
   ArrowsOut,
   Sparkle,
   MusicNotes,
@@ -275,11 +277,10 @@ export function CombinedStudio() {
     }
   }, [currentTrackIndex, currentTrack, isSpotifyActive, localIsPlaying]);
 
-  // Local play/pause toggle for sample tracks
-  const togglePlayback = () => {
+  // Play/pause toggle for Spotify remote playback or local demo
+  const togglePlayback = async () => {
     if (isSpotifyConnected) {
-      // Manual resync trigger when connected to Spotify
-      handleManualResync();
+      await spotify.togglePlay();
       return;
     }
 
@@ -294,10 +295,13 @@ export function CombinedStudio() {
     }
   };
 
-  const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (isSpotifyConnected) return; // Spotify playback is controlled from the user's Spotify app
+  const handleSeek = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const newTime = parseFloat(e.target.value);
-    setLocalCurrentTime(newTime);
+    if (isSpotifyConnected) {
+      await spotify.seek(newTime);
+    } else {
+      setLocalCurrentTime(newTime);
+    }
   };
 
   const handleManualResync = async () => {
@@ -511,17 +515,27 @@ export function CombinedStudio() {
         )}
 
         {spotify.errorMessage && (
-          <div className="mb-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-300 flex items-center justify-between gap-3">
+          <div className="mb-4 rounded-2xl border border-rose-500/30 bg-rose-500/10 p-4 text-xs text-rose-300 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
             <div className="flex items-center gap-2">
               <WarningCircle size={16} className="text-rose-400 shrink-0" />
               <span>{spotify.errorMessage}</span>
             </div>
-            <button
-              onClick={handleManualResync}
-              className="rounded-full bg-rose-500/20 px-3 py-1 text-[11px] font-semibold text-white hover:bg-rose-500/30 transition-colors"
-            >
-              Retry
-            </button>
+            <div className="flex items-center gap-2 shrink-0">
+              {spotify.errorMessage.includes("permission") && (
+                <button
+                  onClick={() => spotify.connect()}
+                  className="rounded-full bg-[#1DB954] px-3.5 py-1 text-[11px] font-bold text-black hover:bg-[#1ed760] transition-colors shadow-sm"
+                >
+                  Enable Play/Pause
+                </button>
+              )}
+              <button
+                onClick={handleManualResync}
+                className="rounded-full bg-zinc-800 px-3 py-1 text-[11px] font-semibold text-white hover:bg-zinc-700 transition-colors"
+              >
+                Retry
+              </button>
+            </div>
           </div>
         )}
 
@@ -665,12 +679,11 @@ export function CombinedStudio() {
               <input
                 type="range"
                 min="0"
-                max={activeDuration}
+                max={activeDuration || 1}
                 step="0.1"
                 value={activeCurrentTime}
                 onChange={handleSeek}
-                disabled={isSpotifyConnected}
-                className="flex-1 h-1.5 rounded-lg bg-zinc-800 accent-indigo-500 cursor-pointer disabled:cursor-default disabled:opacity-75"
+                className="flex-1 h-1.5 rounded-lg bg-zinc-800 accent-indigo-500 cursor-pointer"
               />
               <span className="text-[11px] font-mono text-zinc-500 w-8">
                 {Math.floor(activeDuration / 60)}:
@@ -686,7 +699,7 @@ export function CombinedStudio() {
               <select
                 value={currentTrackIndex}
                 onChange={(e) => setCurrentTrackIndex(Number(e.target.value))}
-                className="bg-zinc-800 text-xs text-zinc-300 rounded-lg px-3 py-1.5 border border-zinc-700/60 focus:outline-none max-w-[200px] truncate"
+                className="bg-zinc-800 text-xs text-zinc-300 rounded-lg px-3 py-1.5 border border-zinc-700/60 focus:outline-none max-w-[180px] sm:max-w-[200px] truncate"
               >
                 {tracks.map((t, idx) => (
                   <option key={t.id} value={idx}>
@@ -695,18 +708,40 @@ export function CombinedStudio() {
                 ))}
               </select>
 
-              {/* Central Play/Pause or Resync */}
-              <button
-                onClick={togglePlayback}
-                title={isSpotifyConnected ? "Spotify Live Sync Active" : "Play / Pause Demo"}
-                className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-950 transition-transform hover:scale-105 active:scale-95 shadow-lg shadow-white/10"
-              >
-                {activeIsPlaying ? (
-                  <Pause size={18} weight="fill" />
-                ) : (
-                  <Play size={18} weight="fill" className="ml-0.5" />
+              {/* Central Controller: Prev, Play/Pause, Next */}
+              <div className="flex items-center gap-2">
+                {isSpotifyConnected && (
+                  <button
+                    onClick={() => spotify.skipPrevious()}
+                    className="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors"
+                    title="Previous Track"
+                  >
+                    <SkipBack size={18} weight="fill" />
+                  </button>
                 )}
-              </button>
+
+                <button
+                  onClick={togglePlayback}
+                  title={activeIsPlaying ? "Pause" : "Play"}
+                  className="flex h-11 w-11 items-center justify-center rounded-full bg-white text-zinc-950 transition-transform hover:scale-105 active:scale-95 shadow-lg shadow-white/10"
+                >
+                  {activeIsPlaying ? (
+                    <Pause size={18} weight="fill" />
+                  ) : (
+                    <Play size={18} weight="fill" className="ml-0.5" />
+                  )}
+                </button>
+
+                {isSpotifyConnected && (
+                  <button
+                    onClick={() => spotify.skipNext()}
+                    className="p-2 text-zinc-400 hover:text-white rounded-lg hover:bg-zinc-800 transition-colors"
+                    title="Next Track"
+                  >
+                    <SkipForward size={18} weight="fill" />
+                  </button>
+                )}
+              </div>
 
               <div className="flex items-center gap-2">
                 {isSpotifyConnected ? (
